@@ -1,0 +1,1159 @@
+// ==UserScript==
+
+// @name         Bot Face ID
+
+// @namespace    https://www.onlinemictest.com
+
+// @version      0.5
+
+// @description  Simula reconhecimento facial usando vídeo pré-gravado para testes e demonstrações
+
+// @match        *://*/*
+
+// @grant        unsafeWindow
+
+// @run-at       document-start
+
+// ==/UserScript==
+
+
+
+(function () {
+
+    'use strict';
+
+
+
+    // Referência para window/unsafeWindow
+
+    const win = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+
+
+
+    // Verificar se estamos em um ambiente que suporta as APIs necessárias
+
+    if (!win.navigator.mediaDevices || !win.navigator.mediaDevices.getUserMedia) {
+
+        console.log("Seu navegador não suporta as APIs necessárias para a câmera virtual");
+
+        return;
+
+    }
+
+
+
+    // Armazenar as funções originais
+
+    const originalGetUserMedia = win.navigator.mediaDevices.getUserMedia.bind(win.navigator.mediaDevices);
+
+    const originalEnumerateDevices = win.navigator.mediaDevices.enumerateDevices.bind(win.navigator.mediaDevices);
+
+
+
+    // Variáveis globais
+
+    let videoVirtual = null;
+
+    let streamVirtual = null;
+
+    let cameraAtiva = false;
+
+    let objectURL = null;
+
+    let animationFrameId = null;
+
+    let interfaceContainer = null;
+
+
+
+    // Configurações
+
+    const CONFIG = {
+
+        frameRate: 30,
+
+        defaultWidth: 640,
+
+        defaultHeight: 480,
+
+        virtualDeviceId: 'bot-face-id-device',
+
+        virtualGroupId: 'bot-face-id-group',
+
+        virtualLabel: 'Câmera Frontal'
+
+    };
+
+
+
+    // Interface para usuário
+
+    function criarInterface() {
+
+        // Limpar interface anterior se existir
+
+        if (interfaceContainer && interfaceContainer.parentNode) {
+
+            interfaceContainer.parentNode.removeChild(interfaceContainer);
+
+        }
+
+
+
+        // Container principal com estilo para garantir visibilidade
+
+        interfaceContainer = document.createElement('div');
+
+        Object.assign(interfaceContainer.style, {
+
+            position: 'fixed',
+
+            top: '10px',
+
+            right: '10px',
+
+            zIndex: '999999',
+
+            background: 'white',
+
+            padding: '10px',
+
+            border: '1px solid black',
+
+            borderRadius: '5px',
+
+            boxShadow: '0 0 10px rgba(0,0,0,0.5)',
+
+            fontFamily: 'Arial, sans-serif',
+
+            fontSize: '14px'
+
+        });
+
+
+
+        // Cabeçalho com botões de controle
+
+        const headerContainer = document.createElement('div');
+
+        Object.assign(headerContainer.style, {
+
+            display: 'flex',
+
+            justifyContent: 'space-between',
+
+            alignItems: 'center',
+
+            marginBottom: '8px',
+
+            borderBottom: '1px solid #ccc',
+
+            paddingBottom: '5px'
+
+        });
+
+
+
+        // Título da interface
+
+        const titulo = document.createElement('div');
+
+        titulo.textContent = 'Bot Face ID';
+
+        Object.assign(titulo.style, {
+
+            fontWeight: 'bold'
+
+        });
+
+
+
+        // Container para botões de controle
+
+        const controlButtons = document.createElement('div');
+
+        Object.assign(controlButtons.style, {
+
+            display: 'flex',
+
+            gap: '5px'
+
+        });
+
+
+
+        // Botão ocultar
+
+        const botaoOcultar = document.createElement('button');
+
+        botaoOcultar.textContent = '×';
+
+        Object.assign(botaoOcultar.style, {
+
+            width: '24px',
+
+            height: '24px',
+
+            padding: '0',
+
+            background: '#f0f0f0',
+
+            border: '1px solid #ccc',
+
+            borderRadius: '3px',
+
+            cursor: 'pointer',
+
+            fontSize: '16px',
+
+            lineHeight: '1',
+
+            display: 'flex',
+
+            justifyContent: 'center',
+
+            alignItems: 'center'
+
+        });
+
+
+
+        // Container para o conteúdo principal (que será ocultado ao minimizar)
+
+        const conteudoContainer = document.createElement('div');
+
+
+
+        // Criar botão para restaurar (invisível inicialmente)
+
+        const botaoRestaurar = document.createElement('button');
+
+        botaoRestaurar.textContent = 'Bot Face ID';
+
+        Object.assign(botaoRestaurar.style, {
+
+            position: 'fixed',
+
+            top: '10px',
+
+            right: '10px',
+
+            zIndex: '999999',
+
+            padding: '5px 10px',
+
+            background: '#2196F3',
+
+            color: 'white',
+
+            border: 'none',
+
+            borderRadius: '4px',
+
+            cursor: 'pointer',
+
+            fontWeight: 'bold',
+
+            display: 'none'
+
+        });
+
+
+
+        // Botão para selecionar arquivo
+
+        const botaoArquivo = criarBotao('Selecionar Face ID');
+
+
+
+        // Input de arquivo oculto
+
+        const inputFile = document.createElement('input');
+
+        inputFile.type = 'file';
+
+        inputFile.accept = 'video/*';
+
+        inputFile.style.display = 'none';
+
+
+
+        // Status display
+
+        const statusDisplay = document.createElement('div');
+
+        statusDisplay.textContent = 'Aguardando seleção de Face ID';
+
+        Object.assign(statusDisplay.style, {
+
+            fontSize: '12px',
+
+            margin: '8px 0',
+
+            padding: '5px',
+
+            backgroundColor: '#f8f8f8',
+
+            borderRadius: '3px',
+
+            textAlign: 'center'
+
+        });
+
+
+
+        // Botão para ativar/desativar
+
+        const botaoAtivar = criarBotao('On Face ID');
+
+        botaoAtivar.disabled = true;
+
+        botaoAtivar.style.opacity = '0.5';
+
+
+
+        // Preview
+
+        const videoPreview = document.createElement('video');
+
+        videoPreview.width = 160;
+
+        videoPreview.height = 120;
+
+        videoPreview.style.display = 'none';
+
+        videoPreview.style.marginTop = '8px';
+
+        videoPreview.style.borderRadius = '3px';
+
+        videoPreview.style.border = '1px solid #ddd';
+
+        videoPreview.muted = true;
+
+        videoPreview.playsInline = true;
+
+
+
+        // Adicionar eventos
+
+        botaoArquivo.onclick = function () {
+
+            inputFile.click();
+
+        };
+
+
+
+        inputFile.onchange = function (e) {
+
+            if (inputFile.files.length > 0) {
+
+                // Limpar URL anterior se existir
+
+                if (objectURL) {
+
+                    URL.revokeObjectURL(objectURL);
+
+                }
+
+
+
+                const file = inputFile.files[0];
+
+                objectURL = URL.createObjectURL(file);
+
+
+
+                // Limpar vídeo anterior se existir
+
+                if (videoVirtual) {
+
+                    videoVirtual.pause();
+
+                    videoVirtual.src = '';
+
+                    videoVirtual.load();
+
+                }
+
+
+
+                videoVirtual = document.createElement('video');
+
+                videoVirtual.src = objectURL;
+
+                videoVirtual.muted = true;
+
+                videoVirtual.loop = true;
+
+                videoVirtual.playsInline = true;
+
+                videoVirtual.autoplay = true;
+
+
+
+                // Configurar preview
+
+                videoPreview.src = objectURL;
+
+                videoPreview.style.display = 'block';
+
+
+
+                // Forçar o play para ambos os vídeos
+
+                const playVideos = async () => {
+
+                    try {
+
+                        await videoVirtual.play();
+
+                        await videoPreview.play();
+
+
+
+                        statusDisplay.innerHTML = '<span style="color:green">✓</span> Face ID carregado! Pronto para ativar';
+
+                        Object.assign(botaoAtivar.style, {
+
+                            opacity: '1',
+
+                            backgroundColor: '#4CAF50'
+
+                        });
+
+                        botaoAtivar.disabled = false;
+
+
+
+                    } catch (err) {
+
+                        console.error("Erro ao reproduzir vídeo:", err);
+
+                        statusDisplay.innerHTML = '<span style="color:red">✗</span> Erro ao reproduzir vídeo: ' +
+
+                            (err.message || 'Erro desconhecido');
+
+
+
+                        // No Mobile, pode precisar de interação do usuário para iniciar reprodução
+
+                        const playButton = criarBotao('Iniciar Face ID');
+
+                        playButton.style.marginTop = '5px';
+
+                        playButton.onclick = playVideos;
+
+                        statusDisplay.appendChild(document.createElement('br'));
+
+                        statusDisplay.appendChild(playButton);
+
+                    }
+
+                };
+
+
+
+                playVideos();
+
+            }
+
+        };
+
+
+
+        botaoAtivar.onclick = function () {
+
+            if (!videoVirtual) return;
+
+
+
+            if (!cameraAtiva) {
+
+                // Ativar câmera virtual
+
+                if (ativarCameraVirtual()) {
+
+                    botaoAtivar.textContent = 'Off Face ID';
+
+                    statusDisplay.innerHTML = '<span style="color:green">✓</span> Bot Face ID ATIVO';
+
+                    botaoAtivar.style.backgroundColor = '#F44336';
+
+                    cameraAtiva = true;
+
+                }
+
+            } else {
+
+                // Desativar câmera virtual
+
+                desativarCameraVirtual();
+
+                botaoAtivar.textContent = 'On Face ID';
+
+                statusDisplay.innerHTML = 'Bot Face ID DESATIVADO';
+
+                botaoAtivar.style.backgroundColor = '#4CAF50';
+
+                cameraAtiva = false;
+
+            }
+
+        };
+
+
+
+        // Adicionar eventos para os botões de controle
+
+        botaoOcultar.onclick = function () {
+
+            interfaceContainer.style.display = 'none';
+
+            botaoRestaurar.style.display = 'block';
+
+        };
+
+
+
+        botaoRestaurar.onclick = function () {
+
+            interfaceContainer.style.display = 'block';
+
+            botaoRestaurar.style.display = 'none';
+
+        };
+
+
+
+        // Adicionar elementos ao cabeçalho
+
+        controlButtons.appendChild(botaoOcultar);
+
+        headerContainer.appendChild(titulo);
+
+        headerContainer.appendChild(controlButtons);
+
+
+
+        // Adicionar elementos ao contenedor de conteúdo
+
+        conteudoContainer.appendChild(botaoArquivo);
+
+        conteudoContainer.appendChild(statusDisplay);
+
+        conteudoContainer.appendChild(botaoAtivar);
+
+        conteudoContainer.appendChild(videoPreview);
+
+        conteudoContainer.appendChild(inputFile);
+
+
+
+        // Adicionar elementos à interface principal
+
+        interfaceContainer.appendChild(headerContainer);
+
+        interfaceContainer.appendChild(conteudoContainer);
+
+
+
+        // Iniciar oculto - simulando o clique no botão (x)
+
+        interfaceContainer.style.display = 'none';
+
+        botaoRestaurar.style.display = 'block';
+
+
+
+        // Aguardar até que o body esteja disponível
+
+        function adicionarAoBody() {
+
+            if (document.body) {
+
+                document.body.appendChild(interfaceContainer);
+
+                document.body.appendChild(botaoRestaurar);
+
+            } else {
+
+                setTimeout(adicionarAoBody, 100);
+
+            }
+
+        }
+
+
+
+        adicionarAoBody();
+
+    }
+
+
+
+    // Função auxiliar para criar botões com estilo consistente
+
+    function criarBotao(texto) {
+
+        const botao = document.createElement('button');
+
+        botao.textContent = texto;
+
+        Object.assign(botao.style, {
+
+            display: 'block',
+
+            width: '100%',
+
+            margin: '5px 0',
+
+            padding: '8px 10px',
+
+            backgroundColor: '#2196F3',
+
+            color: 'white',
+
+            border: 'none',
+
+            borderRadius: '4px',
+
+            cursor: 'pointer',
+
+            fontWeight: 'bold',
+
+            transition: 'background-color 0.3s'
+
+        });
+
+
+
+        botao.onmouseover = () => {
+
+            if (!botao.disabled) botao.style.backgroundColor = '#0b7dda';
+
+        };
+
+        botao.onmouseout = () => {
+
+            if (!botao.disabled) botao.style.backgroundColor = '#2196F3';
+
+        };
+
+
+
+        return botao;
+
+    }
+
+
+
+    // Função para ativar a câmera virtual
+
+    function ativarCameraVirtual() {
+
+        if (!videoVirtual) return false;
+
+
+
+        try {
+
+            if (videoVirtual.paused || videoVirtual.ended) {
+
+                videoVirtual.play().catch(err => {
+
+                    console.error("Erro ao reproduzir vídeo:", err);
+
+                    alert("Erro ao ativar Bot Face ID: " + (err.message || "Falha na reprodução do Face ID"));
+
+                    return false;
+
+                });
+
+            }
+
+
+
+            // Configuração do canvas para capturar frames do vídeo
+
+            const canvas = document.createElement('canvas');
+
+            const ctx = canvas.getContext('2d', { alpha: false }); // Desativar alpha para melhor performance
+
+
+
+            // Otimização: Definir dimensões baseadas no vídeo, mas limitadas para performance
+
+            const videoWidth = videoVirtual.videoWidth || CONFIG.defaultWidth;
+
+            const videoHeight = videoVirtual.videoHeight || CONFIG.defaultHeight;
+
+
+
+            // Calcular dimensões otimizadas mantendo aspect ratio
+
+            let targetWidth = videoWidth;
+
+            let targetHeight = videoHeight;
+
+
+
+            // Limitar dimensões para melhor performance
+
+            const maxDimension = 1280;
+
+            if (videoWidth > maxDimension || videoHeight > maxDimension) {
+
+                if (videoWidth > videoHeight) {
+
+                    targetWidth = maxDimension;
+
+                    targetHeight = Math.floor(videoHeight * (maxDimension / videoWidth));
+
+                } else {
+
+                    targetHeight = maxDimension;
+
+                    targetWidth = Math.floor(videoWidth * (maxDimension / videoHeight));
+
+                }
+
+            }
+
+
+
+            canvas.width = targetWidth;
+
+            canvas.height = targetHeight;
+
+
+
+            // Otimização: Configurar qualidade de imagem
+
+            if (ctx.imageSmoothingEnabled !== undefined) {
+
+                ctx.imageSmoothingEnabled = true;
+
+                ctx.imageSmoothingQuality = 'high';
+
+            }
+
+
+
+            // Função para criar um stream virtual compatível com getUserMedia
+
+            function criarStreamVirtual() {
+
+                if (streamVirtual) {
+
+                    // Limpar stream anterior
+
+                    streamVirtual.getTracks().forEach(track => track.stop());
+
+                }
+
+
+
+                try {
+
+                    // Criar stream do canvas com framerate configurável
+
+                    streamVirtual = canvas.captureStream(CONFIG.frameRate);
+
+
+
+                    // Adicionar propriedades aos tracks para compatibilidade
+
+                    streamVirtual.getTracks().forEach(track => {
+
+                        track.enabled = true;
+
+                        track._isVirtual = true; // Propriedade para identificação interna
+
+
+
+                        // ID e label consistentes para melhor compatibilidade
+
+                        Object.defineProperty(track, 'id', {
+
+                            value: CONFIG.virtualDeviceId + '-track-' + Math.random().toString(36).substr(2, 9),
+
+                            writable: false
+
+                        });
+
+
+
+                        Object.defineProperty(track, 'label', {
+
+                            value: CONFIG.virtualLabel,
+
+                            writable: false
+
+                        });
+
+
+
+                        // Sobrescrever getSettings de forma robusta para compatibilidade
+
+                        const originalGetSettings = track.getSettings;
+
+                        track.getSettings = function () {
+
+                            const settings = originalGetSettings && typeof originalGetSettings === 'function' ?
+
+                                originalGetSettings.call(this) || {} : {};
+
+
+
+                            return Object.assign(settings, {
+
+                                deviceId: CONFIG.virtualDeviceId,
+
+                                groupId: CONFIG.virtualGroupId,
+
+                                width: canvas.width,
+
+                                height: canvas.height,
+
+                                frameRate: CONFIG.frameRate,
+
+                                aspectRatio: canvas.width / canvas.height,
+
+                                facingMode: "user"
+
+                            });
+
+                        };
+
+
+
+                        // Sobrescrever getCapabilities
+
+                        const originalGetCapabilities = track.getCapabilities;
+
+                        track.getCapabilities = function () {
+
+                            const capabilities = originalGetCapabilities && typeof originalGetCapabilities === 'function' ?
+
+                                originalGetCapabilities.call(this) || {} : {};
+
+
+
+                            return Object.assign(capabilities, {
+
+                                deviceId: CONFIG.virtualDeviceId,
+
+                                groupId: CONFIG.virtualGroupId,
+
+                                width: { min: 320, max: 3840 },
+
+                                height: { min: 240, max: 2160 },
+
+                                aspectRatio: { min: 0.5, max: 2.0 },
+
+                                frameRate: { min: 15, max: 60 }
+
+                            });
+
+                        };
+
+
+
+                        // Implementar métodos adicionais para compatibilidade com todos os navegadores
+
+                        if (!track.applyConstraints) {
+
+                            track.applyConstraints = function (constraints) {
+
+                                console.log("Virtual track applyConstraints:", constraints);
+
+                                return Promise.resolve();
+
+                            };
+
+                        }
+
+                    });
+
+
+
+                    return true;
+
+                } catch (err) {
+
+                    console.error("Erro ao criar stream virtual:", err);
+
+                    return false;
+
+                }
+
+            }
+
+
+
+            // Função otimizada que desenha frames do vídeo no canvas
+
+            function atualizarCanvas() {
+
+                if (!cameraAtiva || !videoVirtual) {
+
+                    cancelAnimationFrame(animationFrameId);
+
+                    return;
+
+                }
+
+
+
+                if (!videoVirtual.paused && !videoVirtual.ended) {
+
+                    // Desenhar o frame atual no canvas
+
+                    ctx.drawImage(videoVirtual, 0, 0, canvas.width, canvas.height);
+
+                }
+
+
+
+                // Agendar próximo frame
+
+                animationFrameId = requestAnimationFrame(atualizarCanvas);
+
+            }
+
+
+
+            // Iniciar criação do stream
+
+            if (!criarStreamVirtual()) {
+
+                console.warn("Falha ao criar stream virtual");
+
+                alert("Falha ao configurar o Bot Face ID. Verifique o console para detalhes.");
+
+                return false;
+
+            }
+
+
+
+            // Sobrescrever getUserMedia para retornar nossa stream virtual
+
+            win.navigator.mediaDevices.getUserMedia = async function (constraints) {
+
+                console.log("Interceptando getUserMedia com constraints:", constraints);
+
+
+
+                // Verificar se a solicitação inclui vídeo
+
+                const hasVideoConstraint = constraints &&
+
+                    (constraints.video === true ||
+
+                        (typeof constraints.video === 'object'));
+
+
+
+                if (cameraAtiva && hasVideoConstraint) {
+
+                    try {
+
+                        // Iniciar atualização do canvas se ainda não começou
+
+                        cancelAnimationFrame(animationFrameId); // Limpar animação anterior
+
+                        animationFrameId = requestAnimationFrame(atualizarCanvas);
+
+
+
+                        console.log("Retornando stream virtual para getUserMedia");
+
+                        return Promise.resolve(streamVirtual);
+
+                    } catch (err) {
+
+                        console.error("Erro na câmera virtual:", err);
+
+                        return originalGetUserMedia(constraints);
+
+                    }
+
+                } else {
+
+                    // Para outras solicitações (ex: áudio apenas), usar implementação original
+
+                    return originalGetUserMedia(constraints);
+
+                }
+
+            };
+
+
+
+            // Sobrescrever enumerateDevices para incluir nossa câmera virtual
+
+            win.navigator.mediaDevices.enumerateDevices = async function () {
+
+                const devices = await originalEnumerateDevices();
+
+
+
+                if (cameraAtiva) {
+
+                    // Verificar se o dispositivo virtual já existe na lista
+
+                    const virtualExists = devices.some(device =>
+
+                        device.deviceId === CONFIG.virtualDeviceId);
+
+
+
+                    // Se não existir, adicionar
+
+                    if (!virtualExists) {
+
+                        // Criar dispositivo virtual compatível com todos os navegadores
+
+                        const virtualCamera = {
+
+                            deviceId: CONFIG.virtualDeviceId,
+
+                            groupId: CONFIG.virtualGroupId,
+
+                            kind: "videoinput",
+
+                            label: CONFIG.virtualLabel,
+
+                            // Implementando toJSON para compatibilidade
+
+                            toJSON: function () {
+
+                                return {
+
+                                    deviceId: this.deviceId,
+
+                                    groupId: this.groupId,
+
+                                    kind: this.kind,
+
+                                    label: this.label
+
+                                };
+
+                            }
+
+                        };
+
+
+
+                        return [...devices, virtualCamera];
+
+                    }
+
+                }
+
+
+
+                return devices;
+
+            };
+
+
+
+            return true;
+
+        } catch (e) {
+
+            console.error("Erro ao configurar câmera virtual:", e);
+
+            alert("Ocorreu um erro ao configurar a câmera virtual: " + e.message);
+
+            return false;
+
+        }
+
+    }
+
+
+
+    // Função para desativar a câmera virtual
+
+    function desativarCameraVirtual() {
+
+        cameraAtiva = false;
+
+
+
+        // Cancelar animação de frame
+
+        if (animationFrameId) {
+
+            cancelAnimationFrame(animationFrameId);
+
+            animationFrameId = null;
+
+        }
+
+
+
+        // Restaurar as funções originais
+
+        win.navigator.mediaDevices.getUserMedia = originalGetUserMedia;
+
+        win.navigator.mediaDevices.enumerateDevices = originalEnumerateDevices;
+
+
+
+        // Limpar recursos
+
+        if (streamVirtual) {
+
+            streamVirtual.getTracks().forEach(track => track.stop());
+
+            streamVirtual = null;
+
+        }
+
+
+
+        console.log("Bot Face ID desativado com sucesso");
+
+    }
+
+
+
+    // Limpar recursos quando a página for fechada ou recarregada
+
+    window.addEventListener('beforeunload', function () {
+
+        desativarCameraVirtual();
+
+
+
+        // Liberar URLs de objeto
+
+        if (objectURL) {
+
+            URL.revokeObjectURL(objectURL);
+
+        }
+
+    });
+
+
+
+    // Iniciar a interface depois que o DOM estiver pronto
+
+    if (document.readyState === 'loading') {
+
+        document.addEventListener('DOMContentLoaded', criarInterface);
+
+    } else {
+
+        criarInterface();
+
+    }
+
+})();
